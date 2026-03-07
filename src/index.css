@@ -1,0 +1,41 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600;1,700&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-serif: "Cormorant Garamond", serif;
+  --font-mono: "JetBrains Mono", monospace;
+  
+  --color-parchment: #F4E4BC;
+  --color-charcoal: #2C2C2C;
+  --color-blueprint: #1A2A3A;
+  --color-ocean: #D4E4E6;
+  --color-land: #E8D8B0;
+  --color-ink: #5C5C5C;
+}
+
+@layer base {
+  body {
+    @apply bg-parchment text-charcoal font-serif overflow-hidden;
+  }
+}
+
+.archival-grain {
+  position: relative;
+}
+
+.archival-grain::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: url("https://www.transparenttextures.com/patterns/natural-paper.png");
+  opacity: 0.15;
+  pointer-events: none;
+  z-index: 50;
+}
+
+.blueprint-grid-dark {
+  background-image: 
+    linear-gradient(rgba(0, 0, 0, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.05) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
