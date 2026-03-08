@@ -79,7 +79,7 @@ You MUST ALWAYS respond with a valid JSON object exactly matching this structure
 
 RULES:
 - assistantResponse: ALWAYS required, NEVER empty. Friendly summary of what Atlas is showing.
-- suggestedDestinationIds: 2-5 destination IDs from the list that match the request. Return [] only for purely conversational messages.
+- suggestedDestinationIds: 3-4 destination IDs from the list that match the request. Return [] only for purely conversational messages.
 - suggestedPrices: For each suggested destination, include an estimated round-trip economy airfare from the user's origin city in USD (integer). Use realistic 2024 price ranges. Return {} for conversational messages.
 - updatedParams: ONLY include fields explicitly mentioned by the user. Return {} if nothing changed.
 - tourScript: When suggesting destinations, ALWAYS include a tourScript entry for EACH suggestedDestinationId (same order). The narration should feel like a knowledgeable friend leaning over a map and pointing — warm, specific, never generic brochure-speak. 1-3 sentences max. Include ONE concrete practical fact (cost, flight time, best season, crowd tip). Return [] only for conversational messages with no destination suggestions.
@@ -156,7 +156,9 @@ export async function sendChatMessage(
           ? parsed.assistantResponse
           : 'I found some great options for you. Explore the highlighted destinations on the map.',
       suggestedDestinationIds: Array.isArray(parsed.suggestedDestinationIds)
-        ? parsed.suggestedDestinationIds.filter((id) => validIds.has(id))
+        ? parsed.suggestedDestinationIds
+            .filter((id) => validIds.has(id))
+            .slice(0, 4)
         : [],
       suggestedPrices:
         parsed.suggestedPrices && typeof parsed.suggestedPrices === 'object'

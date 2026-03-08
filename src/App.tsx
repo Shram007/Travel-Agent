@@ -5,16 +5,14 @@
 
 import { useState, useMemo, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { SlidersHorizontal, List, Compass, X } from 'lucide-react';
+import { SlidersHorizontal, List, X } from 'lucide-react';
 
 import { Map } from './components/Map';
 import type { AICursorState } from './components/Map';
 import { ChatDock } from './components/ChatDock';
 import { TravelControls } from './components/TravelControls';
 import { TripSummary } from './components/TripSummary';
-import { RecommendationPanel } from './components/RecommendationPanel';
 import { DetailPanel } from './components/DetailPanel';
-import { DestinationExplorePanel } from './components/DestinationExplorePanel';
 
 import { destinations, Destination } from './data/destinations';
 import { LOCAL_PLACES, LocalPlace } from './data/localPlaces';
@@ -100,23 +98,19 @@ function ActionButton({ icon, label, active, badge, disabled, onClick }: ActionB
 export default function App() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [suggestedIds, setSuggestedIds] = useState<string[]>([]);
+  const [suggestedChipIds, setSuggestedChipIds] = useState<string[]>([]);
   const [suggestedPrices, setSuggestedPrices] = useState<Record<string, number>>({});
   const [selectedSuggestedId, setSelectedSuggestedId] = useState<string | null>(null);
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [tripParams, setTripParams] = useState<TripParams>(DEFAULT_PARAMS);
   const [mode, setMode] = useState<AppMode>('explore');
 
-  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [isChatOpen, setIsChatOpen] = useState(true);
   const [isControlsOpen, setIsControlsOpen] = useState(false);
   const [isSummaryOpen, setIsSummaryOpen] = useState(false);
-  const [isRecommendationOpen, setIsRecommendationOpen] = useState(false);
   const [detailDestination, setDetailDestination] = useState<Destination | null>(null);
 
-  // Destination exploration mode
-  const [destinationMode, setDestinationMode] = useState<{
-    destination: Destination;
-    confirmed: boolean;
-  } | null>(null);
+  const [activeDestination, setActiveDestination] = useState<Destination | null>(null);
 
   // Avatar guide
   const [avatarDestination, setAvatarDestination] = useState<Destination | null>(null);
@@ -135,12 +129,12 @@ export default function App() {
     [selectedIds]
   );
 
-  const suggestedDestinations = useMemo(
+  const suggestedChipDestinations = useMemo(
     () =>
-      suggestedIds
+      suggestedChipIds
         .map((id) => destinations.find((d) => d.id === id))
         .filter((d): d is Destination => !!d),
-    [suggestedIds]
+    [suggestedChipIds]
   );
 
   const handleSelectDestination = useCallback((dest: Destination) => {
@@ -180,7 +174,7 @@ export default function App() {
     setAiCursor(null);
   }, []);
 
-  const runTour = useCallback(async (script: TourStop[]) => {
+  const runTour = useCallback(async (script: TourStop[], pricesById: Record<string, number>) => {
     // Cancel any existing tour
     tourAbortRef.current = true;
     await new Promise((r) => setTimeout(r, 50));
@@ -191,24 +185,43 @@ export default function App() {
         skipResolverRef.current = resolve;
       });
 
+    const revealedIds: string[] = [];
+    const revealedPrices: Record<string, number> = {};
+    let lastVisited: Destination | null = null;
+
     for (let i = 0; i < script.length; i++) {
       if (tourAbortRef.current) break;
       const stop = script[i];
       const dest = destinations.find((d) => d.id === stop.destinationId);
       if (!dest) continue;
+      lastVisited = dest;
 
       // Move cursor to destination (no narration yet — let it travel)
       setAiCursor({ destination: dest, narration: stop.narration, isNarrating: false, stopIndex: i, totalStops: script.length });
       skipResolverRef.current = null;
 
-      await Promise.race([new Promise<void>((r) => setTimeout(r, 1500)), skippable()]);
+      await Promise.race([new Promise<void>((r) => setTimeout(r, 1400)), skippable()]);
       if (tourAbortRef.current) break;
 
-      // Start narration (typewriter begins)
+      // Pause and reveal this suggested destination on the map.
+      if (!revealedIds.includes(dest.id)) {
+        revealedIds.push(dest.id);
+        setSuggestedIds([...revealedIds]);
+      }
+      const price = pricesById[dest.id];
+      if (typeof price === 'number') {
+        revealedPrices[dest.id] = price;
+        setSuggestedPrices({ ...revealedPrices });
+      }
+
+      await Promise.race([new Promise<void>((r) => setTimeout(r, 350)), skippable()]);
+      if (tourAbortRef.current) break;
+
+      // Start narration once the marker is visible.
       skipResolverRef.current = null;
       setAiCursor({ destination: dest, narration: stop.narration, isNarrating: true, stopIndex: i, totalStops: script.length });
 
-      const readTime = Math.max(3500, stop.narration.length * 30);
+      const readTime = Math.max(2600, stop.narration.length * 26);
       await Promise.race([new Promise<void>((r) => setTimeout(r, readTime)), skippable()]);
       if (tourAbortRef.current) break;
 
@@ -218,52 +231,56 @@ export default function App() {
       await new Promise<void>((r) => setTimeout(r, 400));
     }
 
-    if (!tourAbortRef.current) {
-      await new Promise<void>((r) => setTimeout(r, 400));
-      setAiCursor(null);
-      // Leave avatar at the last destination visited
-      const lastStop = script[script.length - 1];
-      const lastDest = lastStop ? destinations.find((d) => d.id === lastStop.destinationId) : null;
-      if (lastDest) setAvatarDestination(lastDest);
-    }
+    await new Promise<void>((r) => setTimeout(r, 250));
+    setAiCursor(null);
+    setSuggestedChipIds(revealedIds);
+    if (lastVisited) setAvatarDestination(lastVisited);
   }, []);
 
   const handleAIResponse = useCallback((response: AIResponse) => {
     if (response.suggestedDestinationIds.length > 0) {
-      setSuggestedIds(response.suggestedDestinationIds);
-      setSuggestedPrices(response.suggestedPrices ?? {});
+      const limitedIds = response.suggestedDestinationIds.slice(0, 4);
+      const limitedPrices = Object.fromEntries(
+        Object.entries(response.suggestedPrices ?? {}).filter(([id]) => limitedIds.includes(id))
+      );
+      const narrationById = new globalThis.Map(
+        (response.tourScript ?? []).map((stop) => [stop.destinationId, stop.narration])
+      );
+      const orderedScript: TourStop[] = limitedIds.map((destinationId) => ({
+        destinationId,
+        narration:
+          narrationById.get(destinationId) ??
+          'A strong match for your trip — great value, easy logistics, and excellent timing for your dates.',
+      }));
+
+      setSuggestedIds([]);
+      setSuggestedChipIds([]);
+      setSuggestedPrices({});
       setSelectedSuggestedId(null); // reset graph selection on new suggestions
-      setIsRecommendationOpen(true);
       setDetailDestination(null);
+      setFocusedId(null);
+      setActiveDestination(null);
+      setAvatarDestination(null);
+      setIsAvatarChatOpen(false);
+
+      void runTour(orderedScript, limitedPrices);
     }
     if (response.updatedParams && Object.keys(response.updatedParams).length > 0) {
       setTripParams((prev) => ({ ...prev, ...response.updatedParams }));
     }
-    if (response.tourScript && response.tourScript.length > 0) {
-      runTour(response.tourScript);
-    }
   }, [runTour]);
 
   const handleSelectSuggestedNode = useCallback((dest: Destination) => {
+    stopTour();
     setSelectedSuggestedId(dest.id);
     setFocusedId(dest.id);
     setDetailDestination(null);
     setIsControlsOpen(false);
     setIsSummaryOpen(false);
-    setIsRecommendationOpen(false);
     setAvatarDestination(dest);   // move avatar to selected destination
     setIsAvatarChatOpen(false);   // close chat if open (will reopen on click)
-    setDestinationMode({ destination: dest, confirmed: false });
-  }, []);
-
-  const handleConfirmDestination = useCallback(() => {
-    setDestinationMode((prev) => prev ? { ...prev, confirmed: true } : null);
-  }, []);
-
-  const handleBackFromDestination = useCallback(() => {
-    setDestinationMode(null);
-    setSelectedSuggestedId(null);
-  }, []);
+    setActiveDestination(dest);
+  }, [stopTour]);
 
   const handleParamsChange = useCallback((partial: Partial<TripParams>) => {
     setTripParams((prev) => ({ ...prev, ...partial }));
@@ -281,7 +298,7 @@ export default function App() {
     ? selectedIds.includes(detailDestination.id)
     : false;
 
-  const confirmedDestination = destinationMode?.confirmed ? destinationMode.destination : null;
+  const confirmedDestination = activeDestination;
   const activeLocalPlaces: LocalPlace[] = confirmedDestination
     ? (LOCAL_PLACES[confirmedDestination.id] ?? [])
     : [];
@@ -442,14 +459,6 @@ export default function App() {
             if (!isSummaryOpen) setIsControlsOpen(false);
           }}
         />
-        <ActionButton
-          icon={<Compass size={15} />}
-          label="AI Suggestions"
-          active={isRecommendationOpen}
-          badge={suggestedIds.length > 0 ? suggestedIds.length : undefined}
-          disabled={suggestedIds.length === 0}
-          onClick={() => setIsRecommendationOpen((o) => !o)}
-        />
 
         {/* Stop tour button — only visible while a tour is running */}
         <AnimatePresence>
@@ -491,15 +500,6 @@ export default function App() {
         onSelectDestination={handleSelectDestination}
       />
 
-      <RecommendationPanel
-        suggestedDestinations={suggestedDestinations}
-        selectedIds={selectedIds}
-        isOpen={isRecommendationOpen}
-        onClose={() => setIsRecommendationOpen(false)}
-        onAddToTrip={handleAddToTrip}
-        onViewDetail={handleSelectDestination}
-      />
-
       <DetailPanel
         destination={detailDestination}
         isSelected={isDetailSelected}
@@ -511,19 +511,44 @@ export default function App() {
         onRemoveFromTrip={handleRemoveFromTrip}
       />
 
-      {/* ── Destination Explore Panel ─────────────────────────────────────── */}
-      {destinationMode && (
-        <DestinationExplorePanel
-          destination={destinationMode.destination}
-          confirmed={destinationMode.confirmed}
-          onConfirm={handleConfirmDestination}
-          onBack={handleBackFromDestination}
-        />
-      )}
+      {/* Suggested destination chips near chat input */}
+      <AnimatePresence>
+        {suggestedChipDestinations.length > 0 && (
+          <motion.div
+            key="destination-chips"
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 10 }}
+            className="fixed left-1/2 -translate-x-1/2 bottom-24 md:bottom-28 z-[45] w-full max-w-2xl px-4 md:px-0 pointer-events-none"
+          >
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 pointer-events-auto">
+              {suggestedChipDestinations.map((dest) => {
+                const isActive = selectedSuggestedId === dest.id;
+                const price = suggestedPrices[dest.id];
+                return (
+                  <button
+                    key={dest.id}
+                    onClick={() => handleSelectSuggestedNode(dest)}
+                    className={`shrink-0 rounded-full border px-3.5 py-1.5 font-mono text-[11px] tracking-wide transition-all ${
+                      isActive
+                        ? 'bg-emerald text-parchment border-emerald'
+                        : 'bg-parchment/95 text-ink/75 border-ink/15 hover:border-emerald/50 hover:text-ink'
+                    }`}
+                  >
+                    {dest.name}
+                    {typeof price === 'number' ? ` · $${price}` : ''}
+                  </button>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ── Chat Dock ─────────────────────────────────────────────────────── */}
       <ChatDock
         tripParams={tripParams}
+        locationContext={activeDestination ? `${activeDestination.name}, ${activeDestination.country}` : undefined}
         onAIResponse={handleAIResponse}
         isOpen={isChatOpen}
         onToggle={() => setIsChatOpen((o) => !o)}

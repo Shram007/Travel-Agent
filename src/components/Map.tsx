@@ -89,15 +89,6 @@ const REGION_LABELS: Array<{ label: string; lon: number; lat: number }> = [
   { label: 'OCEANIA', lon: 145, lat: -30 },
 ];
 
-function arcMidpoint(
-  from: [number, number],
-  to: [number, number],
-  projection: d3.GeoProjection
-): [number, number] | null {
-  const interpolate = d3.geoInterpolate(from, to);
-  return projection(interpolate(0.5));
-}
-
 export const Map: React.FC<MapProps> = ({
   destinations,
   selectedIds,
@@ -128,7 +119,6 @@ export const Map: React.FC<MapProps> = ({
   const [dims, setDims] = useState({ w: window.innerWidth, h: window.innerHeight });
   const [zoom, setZoom] = useState<ZoomState>({ x: 0, y: 0, k: 1 });
   const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [hoveredSuggestedId, setHoveredSuggestedId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -238,17 +228,6 @@ export const Map: React.FC<MapProps> = ({
       path: greatCircleArc(originCoords, [dest.longitude, dest.latitude], projection),
     }));
   }, [mode, selectedDestinations, projection, originCoords]);
-
-  const suggestedDestinations = useMemo(
-    () =>
-      suggestedIds
-        .map((id) => destinations.find((d) => d.id === id))
-        .filter((d): d is Destination => !!d),
-    [suggestedIds, destinations]
-  );
-
-  // Hide route graph once user has confirmed a destination
-  const routeGraphActive = suggestedIds.length > 0 && !confirmedDestination;
 
   // Deep zoom into confirmed destination (scale 7)
   useEffect(() => {
@@ -418,137 +397,7 @@ export const Map: React.FC<MapProps> = ({
               />
             ) : null
           )}
-
-          {/* ── Route graph: origin → AI-suggested destinations ──────────── */}
-          {routeGraphActive && (() => {
-            const originPt = projection(originCoords);
-            return (
-              <>
-                {/* Arcs + price labels */}
-                {suggestedDestinations.map((dest) => {
-                  const isSelected = selectedSuggestedId === dest.id;
-                  const isOther = selectedSuggestedId !== null && !isSelected;
-                  const arcPath = greatCircleArc(originCoords, [dest.longitude, dest.latitude], projection);
-                  const midPt = arcMidpoint(originCoords, [dest.longitude, dest.latitude], projection);
-                  const price = suggestedPrices[dest.id];
-                  const isHov = hoveredSuggestedId === dest.id;
-
-                  return (
-                    <g key={`arc-${dest.id}`}>
-                      {arcPath && (
-                        <path
-                          d={arcPath}
-                          fill="none"
-                          stroke={isSelected ? '#C9A84C' : isHov ? '#2D7A5F' : '#2D7A5F'}
-                          strokeWidth={(isSelected || isHov ? 2 : 1.2) / k}
-                          strokeDasharray={isSelected ? undefined : `${5 / k} ${3 / k}`}
-                          strokeLinecap="round"
-                          opacity={isOther ? 0.18 : isSelected ? 0.95 : isHov ? 0.75 : 0.5}
-                          style={{ transition: 'opacity 0.35s, stroke-width 0.25s' }}
-                        />
-                      )}
-                      {midPt && price !== undefined && (
-                        <g
-                          transform={`translate(${midPt[0]}, ${midPt[1]})`}
-                          style={{ pointerEvents: 'none', opacity: isOther ? 0.2 : 1, transition: 'opacity 0.35s' }}
-                        >
-                          <rect
-                            x={-20 / k} y={-8 / k}
-                            width={40 / k} height={15 / k}
-                            rx={3 / k}
-                            fill="#F5F2ED"
-                            stroke={isSelected ? '#C9A84C' : '#2D7A5F'}
-                            strokeWidth={0.8 / k}
-                          />
-                          <text
-                            textAnchor="middle"
-                            y={4 / k}
-                            fill={isSelected ? '#C9A84C' : '#1A1A1A'}
-                            fontSize={7.5 / k}
-                            fontFamily="'JetBrains Mono', monospace"
-                            fontWeight="600"
-                          >
-                            ${price}
-                          </text>
-                        </g>
-                      )}
-                    </g>
-                  );
-                })}
-
-                {/* Origin node */}
-                {originPt && (
-                  <g transform={`translate(${originPt[0]}, ${originPt[1]})`} style={{ pointerEvents: 'none' }}>
-                    <circle r={16 / k} fill="none" stroke="#1A1A1A" strokeWidth={0.8 / k} opacity={0.12} />
-                    <circle r={10 / k} fill="#1A1A1A" />
-                    <circle r={4 / k} fill="#F5F2ED" />
-                    <text
-                      y={-(14 / k)}
-                      textAnchor="middle"
-                      fill="#1A1A1A"
-                      fontSize={7.5 / k}
-                      fontFamily="'JetBrains Mono', monospace"
-                      fontWeight="700"
-                      letterSpacing={1 / k}
-                    >
-                      {origin.toUpperCase()}
-                    </text>
-                  </g>
-                )}
-
-                {/* Destination route nodes */}
-                {suggestedDestinations.map((dest) => {
-                  const pt = project(dest);
-                  if (!pt) return null;
-                  const isSelected = selectedSuggestedId === dest.id;
-                  const isOther = selectedSuggestedId !== null && !isSelected;
-                  const isHov = hoveredSuggestedId === dest.id;
-
-                  return (
-                    <g
-                      key={`rnode-${dest.id}`}
-                      transform={`translate(${pt[0]}, ${pt[1]})`}
-                      style={{ cursor: 'pointer', opacity: isOther ? 0.3 : 1, transition: 'opacity 0.35s' }}
-                      onClick={() => handleSuggestedNodeClick(dest)}
-                      onMouseEnter={() => setHoveredSuggestedId(dest.id)}
-                      onMouseLeave={() => setHoveredSuggestedId(null)}
-                    >
-                      {/* Hover / selected ring */}
-                      {(isHov || isSelected) && (
-                        <circle
-                          r={13 / k}
-                          fill="none"
-                          stroke={isSelected ? '#C9A84C' : '#2D7A5F'}
-                          strokeWidth={1.2 / k}
-                          opacity={0.5}
-                        />
-                      )}
-                      <circle
-                        r={8 / k}
-                        fill={isSelected ? '#C9A84C' : '#2D7A5F'}
-                        stroke={isSelected ? '#8B6A30' : '#1D5C45'}
-                        strokeWidth={1.5 / k}
-                      />
-                      <circle r={3 / k} fill="#F5F2ED" style={{ pointerEvents: 'none' }} />
-                      <text
-                        y={-(12 / k)}
-                        textAnchor="middle"
-                        fill={isSelected ? '#C9A84C' : '#1A1A1A'}
-                        fontSize={9 / k}
-                        fontFamily="'JetBrains Mono', monospace"
-                        fontWeight={isSelected ? '700' : '500'}
-                        style={{ pointerEvents: 'none', userSelect: 'none' }}
-                      >
-                        {dest.name}
-                      </text>
-                    </g>
-                  );
-                })}
-              </>
-            );
-          })()}
-
-          {/* ── Local place markers (destination exploration mode) ───────── */}
+          {/* ── Local place markers (destination mode) ───────────────────── */}
           {confirmedDestination && localPlaces.map((place) => {
             const pt = projection([place.lng, place.lat]);
             if (!pt) return null;
@@ -600,24 +449,34 @@ export const Map: React.FC<MapProps> = ({
             const [x, y] = pt;
             const isSelected = selectedIds.includes(dest.id);
             const isSuggested = suggestedIds.includes(dest.id);
+            const isSuggestedFocus = selectedSuggestedId === dest.id;
+            const isOtherSuggested = selectedSuggestedId !== null && isSuggested && !isSuggestedFocus;
             const isHovered = hoveredId === dest.id;
             const isFocused = focusedId === dest.id;
-            const showLabel = isHovered || isSelected || isFocused;
+            const showLabel = isHovered || isSelected || isFocused || isSuggestedFocus;
+            const price = suggestedPrices[dest.id];
 
-            const r = (isHovered || isFocused ? 6 : isSelected ? 5.5 : isSuggested ? 5 : 4) / k;
+            const r = (isHovered || isFocused ? 6 : isSelected || isSuggestedFocus ? 5.8 : isSuggested ? 5.2 : 4) / k;
 
             return (
               <g
                 key={dest.id}
                 transform={`translate(${x}, ${y})`}
-                style={{ cursor: 'pointer' }}
-                onClick={() => onSelectDestination(dest)}
+                style={{ cursor: 'pointer', opacity: isOtherSuggested ? 0.25 : 1, transition: 'opacity 0.35s' }}
+                onClick={() => (isSuggested ? handleSuggestedNodeClick(dest) : onSelectDestination(dest))}
                 onMouseEnter={() => setHoveredId(dest.id)}
                 onMouseLeave={() => setHoveredId(null)}
               >
                 {/* Suggested pulse ring */}
                 {isSuggested && !isSelected && (
-                  <circle r={11 / k} fill="none" stroke="#2D7A5F" strokeWidth={1 / k} opacity={0.35} />
+                  <circle
+                    r={isSuggestedFocus ? 12.5 / k : 11 / k}
+                    fill="none"
+                    stroke={isSuggestedFocus ? '#C9A84C' : '#2D7A5F'}
+                    strokeWidth={isSuggestedFocus ? 1.4 / k : 1 / k}
+                    opacity={isSuggestedFocus ? 0.65 : 0.35}
+                    className={isSuggestedFocus ? undefined : 'animate-pulse'}
+                  />
                 )}
 
                 {/* Selected outer ring */}
@@ -625,17 +484,50 @@ export const Map: React.FC<MapProps> = ({
                   <circle r={9 / k} fill="none" stroke="#C9A84C" strokeWidth={1.5 / k} opacity={0.6} />
                 )}
 
+                {/* Suggested focus ring */}
+                {isSuggestedFocus && (
+                  <circle r={10.5 / k} fill="none" stroke="#C9A84C" strokeWidth={1.2 / k} opacity={0.72} />
+                )}
+
                 {/* Focus ring */}
-                {isFocused && !isSelected && (
+                {isFocused && !isSelected && !isSuggestedFocus && (
                   <circle r={9 / k} fill="none" stroke="#C9A84C" strokeWidth={1 / k} opacity={0.5} />
                 )}
 
                 {/* Main dot */}
                 <circle
                   r={r}
-                  fill={markerFill(dest)}
+                  fill={isSuggestedFocus ? '#C9A84C' : markerFill(dest)}
                   filter="url(#marker-shadow)"
                 />
+
+                {/* Suggested fare tag */}
+                {isSuggested && typeof price === 'number' && (
+                  <g transform={`translate(${10 / k}, ${-12 / k})`} style={{ pointerEvents: 'none' }}>
+                    <rect
+                      x={0}
+                      y={0}
+                      width={34 / k}
+                      height={12 / k}
+                      rx={3 / k}
+                      fill="#F5F2ED"
+                      stroke={isSuggestedFocus ? '#C9A84C' : '#2D7A5F'}
+                      strokeWidth={0.8 / k}
+                      opacity={0.96}
+                    />
+                    <text
+                      x={17 / k}
+                      y={8 / k}
+                      textAnchor="middle"
+                      fill={isSuggestedFocus ? '#8B6A30' : '#1A1A1A'}
+                      fontSize={6.8 / k}
+                      fontFamily="'JetBrains Mono', monospace"
+                      fontWeight="700"
+                    >
+                      ${price}
+                    </text>
+                  </g>
+                )}
 
                 {/* Label */}
                 {showLabel && (
@@ -643,10 +535,10 @@ export const Map: React.FC<MapProps> = ({
                     x={0}
                     y={-(r + 6 / k)}
                     textAnchor="middle"
-                    fill={isSelected ? '#C9A84C' : '#1A1A1A'}
+                    fill={isSelected || isSuggestedFocus ? '#C9A84C' : '#1A1A1A'}
                     fontSize={9 / k}
                     fontFamily="'JetBrains Mono', monospace"
-                    fontWeight={isSelected ? '600' : '400'}
+                    fontWeight={isSelected || isSuggestedFocus ? '600' : '400'}
                     style={{ pointerEvents: 'none', userSelect: 'none' }}
                   >
                     {dest.name}

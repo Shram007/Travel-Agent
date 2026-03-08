@@ -10,6 +10,7 @@ import { ChatMessage, TripParams, AIResponse, sendChatMessage, getQuickSuggestio
 
 interface ChatDockProps {
   tripParams: TripParams;
+  locationContext?: string;
   onAIResponse: (response: AIResponse) => void;
   isOpen: boolean;
   onToggle: () => void;
@@ -17,6 +18,7 @@ interface ChatDockProps {
 
 export const ChatDock: React.FC<ChatDockProps> = ({
   tripParams,
+  locationContext,
   onAIResponse,
   isOpen,
   onToggle,
@@ -65,7 +67,7 @@ export const ChatDock: React.FC<ChatDockProps> = ({
       setShowSuggestions(false);
 
       try {
-        const response = await sendChatMessage(msg, messages, tripParams);
+        const response = await sendChatMessage(msg, messages, tripParams, locationContext);
         const assistantMessage: ChatMessage = {
           role: 'assistant',
           content: response.assistantResponse,
