@@ -1,24 +1,62 @@
-@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600;1,700&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap');
+/* ── Font imports ─────────────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400&family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500;1,600&display=swap');
+
 @import "tailwindcss";
 
+/* ── Theme tokens ─────────────────────────────────────────────────────────── */
 @theme {
-  --font-serif: "Cormorant Garamond", serif;
-  --font-mono: "JetBrains Mono", monospace;
-  
-  --color-parchment: #F4E4BC;
-  --color-charcoal: #2C2C2C;
-  --color-blueprint: #1A2A3A;
-  --color-ocean: #D4E4E6;
-  --color-land: #E8D8B0;
-  --color-ink: #5C5C5C;
+  /* Typography */
+  --font-sans:  "Inter", system-ui, sans-serif;
+  --font-serif: "Cormorant Garamond", Georgia, serif;
+  --font-mono:  "JetBrains Mono", "Fira Code", monospace;
+
+  /* Palette — Archival Modernism */
+  --color-parchment: #F5F2ED;    /* off-white background              */
+  --color-ink:       #1A1A1A;    /* deep charcoal for text/UI         */
+  --color-emerald:   #2D7A5F;    /* primary accent — emerald green     */
+  --color-gold:      #C9A84C;    /* secondary accent — archive gold    */
+  --color-gold-dark: #9A7030;    /* darker gold for text on light bg  */
+
+  /* Map palette */
+  --color-ocean: #C8D8E4;
+  --color-land:  #EDE8DC;
+
+  /* Spacing extras */
+  --shadow-card: 0 4px 24px rgba(26, 26, 26, 0.08), 0 1px 4px rgba(26, 26, 26, 0.04);
 }
 
+/* ── Base ─────────────────────────────────────────────────────────────────── */
 @layer base {
+  *, *::before, *::after {
+    box-sizing: border-box;
+  }
+
+  html, body, #root {
+    height: 100%;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+
   body {
-    @apply bg-parchment text-charcoal font-serif overflow-hidden;
+    @apply bg-parchment text-ink font-sans;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Nice selection */
+  ::selection {
+    background: theme('colors.ink');
+    color: theme('colors.parchment');
   }
 }
 
+/* ── Archival grain overlay ───────────────────────────────────────────────── */
+/*
+   Applied to the global overlay div in App.tsx.
+   Uses SVG noise for a subtle paper/film-grain texture without an external URL.
+*/
 .archival-grain {
   position: relative;
 }
@@ -27,15 +65,91 @@
   content: "";
   position: absolute;
   inset: 0;
-  background-image: url("https://www.transparenttextures.com/patterns/natural-paper.png");
-  opacity: 0.15;
+  /* Inline SVG turbulence noise — no external dependency */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+  opacity: 0.045;
   pointer-events: none;
-  z-index: 50;
+  z-index: 1;
+  mix-blend-mode: multiply;
 }
 
-.blueprint-grid-dark {
-  background-image: 
-    linear-gradient(rgba(0, 0, 0, 0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 0, 0, 0.05) 1px, transparent 1px);
-  background-size: 20px 20px;
+/* ── Range input styling ──────────────────────────────────────────────────── */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  background: theme('colors.ink / 12%');
+  height: 4px;
+  border-radius: 9999px;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  background: theme('colors.ink');
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  margin-top: -5px;
+  transition: transform 0.15s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+input[type="range"]::-moz-range-track {
+  background: theme('colors.ink / 12%');
+  height: 4px;
+  border-radius: 9999px;
+}
+
+input[type="range"]::-moz-range-thumb {
+  background: theme('colors.ink');
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: none;
+}
+
+/* ── Custom scrollbar ─────────────────────────────────────────────────────── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(26, 26, 26, 0.12) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(26, 26, 26, 0.12);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(26, 26, 26, 0.22);
+}
+
+/* ── Tailwind line-clamp utility fallback ─────────────────────────────────── */
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.line-clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
