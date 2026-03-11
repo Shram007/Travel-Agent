@@ -332,9 +332,9 @@ export const Map: React.FC<MapProps> = ({
 
         <g ref={gRef}>
           {/* Land */}
-          {countries.map((feature: any) => (
+          {countries.map((feature: any, idx: number) => (
             <path
-              key={feature.id}
+              key={feature.id || `country-${idx}`}
               d={pathGen(feature) ?? ''}
               fill="#E8D5A8"
               stroke="none"

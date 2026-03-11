@@ -6,7 +6,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Send, ChevronDown, Sparkles, Loader2, X, Lightbulb } from 'lucide-react';
-import { ChatMessage, TripParams, AIResponse, sendChatMessage, getQuickSuggestions } from '../services/travelService';
+import { ChatMessage, TripParams, AIResponse, sendChatMessage, getQuickSuggestions, AVAILABLE_GEMINI_MODELS } from '../services/travelService';
 
 interface ChatDockProps {
   tripParams: TripParams;
@@ -37,6 +37,7 @@ export const ChatDock: React.FC<ChatDockProps> = ({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const suggestions = getQuickSuggestions();
+  const [selectedModel, setSelectedModel] = useState<string>(AVAILABLE_GEMINI_MODELS[0]);
 
   useEffect(() => {
     if (messagesEndRef.current) {
@@ -67,7 +68,7 @@ export const ChatDock: React.FC<ChatDockProps> = ({
       setShowSuggestions(false);
 
       try {
-        const response = await sendChatMessage(msg, messages, tripParams, locationContext);
+        const response = await sendChatMessage(msg, messages, tripParams, selectedModel);
         const assistantMessage: ChatMessage = {
           role: 'assistant',
           content: response.assistantResponse,
@@ -88,7 +89,7 @@ export const ChatDock: React.FC<ChatDockProps> = ({
         setIsThinking(false);
       }
     },
-    [input, messages, isThinking, tripParams, onAIResponse]
+    [input, messages, isThinking, tripParams, onAIResponse, selectedModel]
   );
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -287,17 +288,33 @@ export const ChatDock: React.FC<ChatDockProps> = ({
 
                 {/* Input area */}
                 <div className="px-5 py-3 flex items-end gap-3">
-                  <textarea
-                    ref={inputRef}
-                    value={input}
-                    onChange={handleInputChange}
-                    onKeyDown={handleKeyDown}
-                    placeholder="Ask Atlas anything about travel..."
-                    rows={1}
-                    disabled={isThinking}
-                    className="flex-1 resize-none bg-transparent font-sans text-sm text-ink placeholder-ink/30 outline-none leading-relaxed py-1"
-                    style={{ minHeight: '24px', maxHeight: '120px' }}
-                  />
+                  <div className="flex-1">
+                    <div className="mb-1.5">
+                      <select
+                        value={selectedModel}
+                        onChange={(e) => setSelectedModel(e.target.value)}
+                        disabled={isThinking}
+                        className="w-full md:w-auto bg-ink/[0.04] border border-ink/[0.08] rounded-md px-2 py-1 text-[11px] font-mono text-ink/70 outline-none disabled:opacity-50"
+                      >
+                        {AVAILABLE_GEMINI_MODELS.map((model) => (
+                          <option key={model} value={model}>
+                            {model}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <textarea
+                      ref={inputRef}
+                      value={input}
+                      onChange={handleInputChange}
+                      onKeyDown={handleKeyDown}
+                      placeholder="Ask Atlas anything about travel..."
+                      rows={1}
+                      disabled={isThinking}
+                      className="w-full resize-none bg-transparent font-sans text-sm text-ink placeholder-ink/30 outline-none leading-relaxed py-1"
+                      style={{ minHeight: '24px', maxHeight: '120px' }}
+                    />
+                  </div>
                   <button
                     onClick={() => handleSend()}
                     disabled={!input.trim() || isThinking}

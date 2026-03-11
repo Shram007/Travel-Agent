@@ -60,7 +60,7 @@ export async function searchDestinationInfo(
 
   const query = `Best things to do in ${city}, ${country} — travel guide highlights activities food`;
 
-  const result = await exa.search(query, {
+  const result: any = await (exa as any).search(query, {
     type: 'auto',          // let Exa decide neural vs keyword
     numResults,
     contents: {
@@ -96,7 +96,7 @@ export async function searchHotels(
 
   const query = `Best hotels to stay in ${city}, ${country} — top-rated accommodation recommendations`;
 
-  const result = await exa.search(query, {
+  const result: any = await (exa as any).search(query, {
     type: 'auto',
     numResults,
     contents: {
@@ -133,7 +133,7 @@ export async function searchFlightInfo(
 
   const query = `Flights from ${origin} to ${destination} ${country} — best airlines prices travel tips`;
 
-  const result = await exa.search(query, {
+  const result: any = await (exa as any).search(query, {
     type: 'auto',
     numResults,
     contents: {
@@ -176,4 +176,43 @@ export async function searchFullDestinationBrief(
   ]);
 
   return { activities, hotels, flights };
+}
+
+export interface ExaContextResult {
+  highlights: string[];
+  sources: { title: string; url: string }[];
+}
+
+/**
+ * Generic travel context search used to ground itinerary/chat responses
+ * with up-to-date web information (flights, logistics, seasonal notes, etc.).
+ */
+export async function searchTravelContext(
+  query: string,
+  options: TravelSearchOptions = {}
+): Promise<ExaContextResult> {
+  const exa = getExaClient();
+  const { numResults = 6, maxHighlightChars = 500 } = options;
+
+  const result: any = await (exa as any).search(query, {
+    type: 'auto',
+    numResults,
+    contents: {
+      highlights: {
+        numSentences: 3,
+        highlightsPerResult: 2,
+        maxCharacters: maxHighlightChars,
+      },
+    },
+  });
+
+  const highlights: string[] = [];
+  const sources: { title: string; url: string }[] = [];
+
+  for (const r of result.results) {
+    if (r.highlights) highlights.push(...r.highlights);
+    sources.push({ title: r.title ?? 'Travel source', url: r.url });
+  }
+
+  return { highlights, sources };
 }

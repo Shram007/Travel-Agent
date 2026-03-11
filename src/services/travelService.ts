@@ -8,6 +8,20 @@ import { destinations } from '../data/destinations';
 
 const API_KEY = process.env.GEMINI_API_KEY;
 
+export const AVAILABLE_GEMINI_MODELS = [
+  'gemini-2.5-pro',
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
+] as const;
+
+export type GeminiModel = (typeof AVAILABLE_GEMINI_MODELS)[number];
+
+function resolveModel(model?: string): GeminiModel {
+  return AVAILABLE_GEMINI_MODELS.includes(model as GeminiModel)
+    ? (model as GeminiModel)
+    : 'gemini-2.5-pro';
+}
+
 let ai: GoogleGenAI | null = null;
 function getAI(): GoogleGenAI {
   if (!ai) {
@@ -40,6 +54,62 @@ export interface AIResponse {
   suggestedPrices: Record<string, number>; // destinationId -> estimated round-trip price USD
   updatedParams: Partial<TripParams>;
   tourScript: TourStop[];
+}
+
+interface ExaContextPayload {
+  highlights?: string[];
+  sources?: { title?: string; url?: string }[];
+}
+
+async function fetchExaTravelContext(
+  message: string,
+  currentParams: TripParams
+): Promise<string> {
+  const query = `Travel itinerary and flight planning context for a user traveling from ${currentParams.origin || 'unknown origin'} with budget ${currentParams.budget} USD for ${currentParams.duration} days in ${currentParams.season}. User request: ${message}`;
+
+  try {
+    const response = await fetch('/api/exa/context', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query,
+        numResults: 6,
+        maxHighlightChars: 500,
+      }),
+    });
+
+    if (!response.ok) {
+      return '';
+    }
+
+    const payload = (await response.json()) as ExaContextPayload;
+    const highlights = Array.isArray(payload.highlights)
+      ? payload.highlights.filter((h): h is string => typeof h === 'string').slice(0, 8)
+      : [];
+
+    const sources = Array.isArray(payload.sources)
+      ? payload.sources
+          .filter(
+            (s): s is { title?: string; url: string } =>
+              !!s && typeof s.url === 'string' && s.url.length > 0
+          )
+          .slice(0, 5)
+      : [];
+
+    if (highlights.length === 0) {
+      return '';
+    }
+
+    const highlightsText = highlights.map((h) => `- ${h}`).join('\n');
+    const sourcesText = sources
+      .map((s) => `- ${s.title && s.title.length > 0 ? s.title : 'Source'}: ${s.url}`)
+      .join('\n');
+
+    return `[Live travel context from Exa]\n${highlightsText}${sourcesText ? `\nSources:\n${sourcesText}` : ''}`;
+  } catch (error) {
+    console.warn('Exa context fetch failed. Continuing without Exa grounding.', error);
+    return '';
+  }
 }
 
 // Build the destination index summary for the system prompt
@@ -95,7 +165,7 @@ export async function sendChatMessage(
   message: string,
   history: ChatMessage[],
   currentParams: TripParams,
-  locationContext?: string
+  selectedModel?: string
 ): Promise<AIResponse> {
   if (!API_KEY) {
     return {
@@ -114,8 +184,7 @@ export async function sendChatMessage(
     parts: [{ text: msg.content }],
   }));
 
-  const locationStr = locationContext ? `\nCurrently viewing: ${locationContext}` : '';
-  const contextPrefix = `[Current trip parameters: Origin="${currentParams.origin || 'Not set'}", Budget=$${currentParams.budget}, Duration=${currentParams.duration} days, Season=${currentParams.season}${locationStr}]\n\nUser message: ${message}`;
+  const contextPrefix = `[Current trip parameters: Origin="${currentParams.origin || 'Not set'}", Budget=$${currentParams.budget}, Duration=${currentParams.duration} days, Season=${currentParams.season}]\n\nUser message: ${message}`;
 
   const allContents: Content[] = [
     ...geminiHistory,
@@ -127,28 +196,41 @@ export async function sendChatMessage(
 
   try {
     const client = getAI();
+    const modelToUse = resolveModel(selectedModel);
     const response = await client.models.generateContent({
-      model: 'gemini-2.0-flash',
+      model: modelToUse,
       contents: allContents,
       config: {
         systemInstruction: SYSTEM_PROMPT,
         temperature: 0.8,
-        maxOutputTokens: 1024,
+        maxOutputTokens: 2048,
+        responseMimeType: "application/json",
       },
     });
 
     const raw = response.text?.trim() ?? '';
 
-    // Extract JSON — handle potential markdown code fences
+    // Extract JSON efficiently by finding the outermost braces
     let jsonText = raw;
-    const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (fenceMatch) {
-      jsonText = fenceMatch[1].trim();
+    const firstBrace = raw.indexOf('{');
+    const lastBrace = raw.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace >= firstBrace) {
+      jsonText = raw.substring(firstBrace, lastBrace + 1);
+    } else {
+      console.warn("Could not find robust JSON boundaries in AI response. Attempting raw parse.", { raw });
+    }
+    
+    console.log("Extracted JSON text intended for parsing:", jsonText);
+
+    let parsed: any = {};
+    try {
+      if (!jsonText) throw new Error("Empty jsonText");
+      parsed = JSON.parse(jsonText);
+    } catch (parseError) {
+      console.error("Failed to parse JSON text from AI response. JSON text:", jsonText, "Raw response:", raw);
+      throw new Error("Invalid response format from AI");
     }
 
-    const parsed = JSON.parse(jsonText) as AIResponse;
-
-    // Validate and sanitise
     const validIds = new Set(destinations.map((d) => d.id));
     return {
       assistantResponse:
