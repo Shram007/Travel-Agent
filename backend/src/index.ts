@@ -6,13 +6,25 @@
 
 import 'dotenv/config';
 import express from 'express';
+import cors from 'cors';
+import rateLimit from 'express-rate-limit';
 import { searchTravelContext } from './exa/exaService.js';
 import { callGmiChat, GMI_MODELS } from './gmi/gmiService.js';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
+app.use(cors());
 app.use(express.json());
+
+// Rate limiting — 30 requests per minute per IP for AI endpoints
+const aiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Please wait a moment before trying again.' },
+});
 
 // Health check
 app.get('/health', (_req, res) => {
@@ -24,8 +36,13 @@ app.get('/health', (_req, res) => {
   });
 });
 
+// GMI Cloud available models — single source of truth for the frontend
+app.get('/api/gmi/models', (_req, res) => {
+  res.json({ models: GMI_MODELS });
+});
+
 // Exa context route for grounding itinerary/chat responses
-app.post('/api/exa/context', async (req, res) => {
+app.post('/api/exa/context', aiLimiter, async (req, res) => {
   try {
     const query = typeof req.body?.query === 'string' ? req.body.query.trim() : '';
     if (!query) {
@@ -54,7 +71,7 @@ app.post('/api/exa/context', async (req, res) => {
 // GMI Cloud chat route — authenticated proxy to https://api.gmi-serving.com/v1
 // The frontend builds the full OpenAI-format messages array and sends it here
 // so the GMI_CLOUD_API_KEY is never exposed to the browser.
-app.post('/api/gmi/chat', async (req, res) => {
+app.post('/api/gmi/chat', aiLimiter, async (req, res) => {
   try {
     const messages = req.body?.messages;
     if (!Array.isArray(messages) || messages.length === 0) {

@@ -6,11 +6,10 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Send, ChevronDown, Sparkles, Loader2, X, Lightbulb } from 'lucide-react';
-import { ChatMessage, TripParams, AIResponse, sendChatMessage, getQuickSuggestions, AVAILABLE_GEMINI_MODELS, AVAILABLE_GMI_MODELS } from '../services/travelService';
+import { ChatMessage, TripParams, AIResponse, sendChatMessage, getQuickSuggestions, AVAILABLE_GEMINI_MODELS, AVAILABLE_GMI_MODELS, fetchGmiModels } from '../services/travelService';
 
 interface ChatDockProps {
   tripParams: TripParams;
-  locationContext?: string;
   onAIResponse: (response: AIResponse) => void;
   isOpen: boolean;
   onToggle: () => void;
@@ -18,7 +17,6 @@ interface ChatDockProps {
 
 export const ChatDock: React.FC<ChatDockProps> = ({
   tripParams,
-  locationContext,
   onAIResponse,
   isOpen,
   onToggle,
@@ -38,6 +36,12 @@ export const ChatDock: React.FC<ChatDockProps> = ({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const suggestions = getQuickSuggestions();
   const [selectedModel, setSelectedModel] = useState<string>(AVAILABLE_GEMINI_MODELS[0]);
+  const [gmiModels, setGmiModels] = useState<string[]>(AVAILABLE_GMI_MODELS);
+
+  // Fetch authoritative GMI model list from backend on mount
+  useEffect(() => {
+    fetchGmiModels().then(setGmiModels);
+  }, []);
 
   useEffect(() => {
     if (messagesEndRef.current) {
@@ -304,7 +308,7 @@ export const ChatDock: React.FC<ChatDockProps> = ({
                           ))}
                         </optgroup>
                         <optgroup label="GMI Cloud">
-                          {AVAILABLE_GMI_MODELS.map((model) => (
+                          {gmiModels.map((model) => (
                             <option key={model} value={model}>
                               {model}
                             </option>

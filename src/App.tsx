@@ -548,7 +548,6 @@ export default function App() {
       {/* ── Chat Dock ─────────────────────────────────────────────────────── */}
       <ChatDock
         tripParams={tripParams}
-        locationContext={activeDestination ? `${activeDestination.name}, ${activeDestination.country}` : undefined}
         onAIResponse={handleAIResponse}
         isOpen={isChatOpen}
         onToggle={() => setIsChatOpen((o) => !o)}

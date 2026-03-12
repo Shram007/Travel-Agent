@@ -98,11 +98,11 @@ export const AvatarChat: React.FC<AvatarChatProps> = ({
 
     try {
       const history = messages.slice(-10);
-      const locationContext = currentDestination
-        ? `Currently at: ${currentDestination.name}, ${currentDestination.country}. Region: ${currentDestination.region}. Tags: ${currentDestination.tags.join(', ')}.`
-        : undefined;
+      const locationPrefix = currentDestination
+        ? `[Currently viewing: ${currentDestination.name}, ${currentDestination.country}. Region: ${currentDestination.region}. Tags: ${currentDestination.tags.join(', ')}]\n\n`
+        : '';
 
-      const response = await sendChatMessage(text, history, tripParams, locationContext);
+      const response = await sendChatMessage(locationPrefix + text, history, tripParams);
 
       setMessages((prev) => [
         ...prev,

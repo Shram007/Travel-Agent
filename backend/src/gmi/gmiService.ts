@@ -71,14 +71,23 @@ export async function callGmiChat(req: GmiChatRequest): Promise<GmiChatResponse>
     response_format: { type: 'json_object' },
   });
 
-  const resp = await fetch('https://api.gmi-serving.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body,
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+
+  let resp: Response;
+  try {
+    resp = await fetch('https://api.gmi-serving.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (!resp.ok) {
     const errText = await resp.text().catch(() => resp.statusText);

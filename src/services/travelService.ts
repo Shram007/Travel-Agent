@@ -16,24 +16,34 @@ export const AVAILABLE_GEMINI_MODELS = [
 
 export type GeminiModel = (typeof AVAILABLE_GEMINI_MODELS)[number];
 
-/** GMI Cloud model identifiers (routed via backend /api/gmi/chat). */
-export const AVAILABLE_GMI_MODELS = [
+/** GMI Cloud model identifiers — fallback list used until backend responds. */
+export let AVAILABLE_GMI_MODELS: string[] = [
   'deepseek-ai/DeepSeek-R1',
   'meta-llama/Meta-Llama-3.3-70B-Instruct',
   'Qwen/Qwen2.5-72B-Instruct',
-] as const;
-
-export type GmiModel = (typeof AVAILABLE_GMI_MODELS)[number];
-
-/** Combined list of all available models shown in the model picker. */
-export const AVAILABLE_MODELS: readonly string[] = [
-  ...AVAILABLE_GEMINI_MODELS,
-  ...AVAILABLE_GMI_MODELS,
 ];
 
+export type GmiModel = string;
+
+/** Fetch the authoritative GMI model list from the backend (single source of truth). */
+export async function fetchGmiModels(): Promise<string[]> {
+  try {
+    const resp = await fetch('/api/gmi/models');
+    if (resp.ok) {
+      const data = (await resp.json()) as { models?: string[] };
+      if (Array.isArray(data.models) && data.models.length > 0) {
+        AVAILABLE_GMI_MODELS = data.models;
+      }
+    }
+  } catch {
+    console.warn('Could not fetch GMI models from backend. Using fallback list.');
+  }
+  return AVAILABLE_GMI_MODELS;
+}
+
 /** Returns true when the selected model should be routed to GMI Cloud. */
-export function isGmiModel(model: string): model is GmiModel {
-  return (AVAILABLE_GMI_MODELS as readonly string[]).includes(model);
+export function isGmiModel(model: string): boolean {
+  return AVAILABLE_GMI_MODELS.includes(model);
 }
 
 function resolveGeminiModel(model?: string): GeminiModel {
@@ -181,6 +191,81 @@ RULES:
 
 IMPORTANT: Return ONLY the JSON object. No markdown fences, no extra text.`;
 
+// ── Shared response parser ────────────────────────────────────────────────────
+
+/**
+ * Parse raw LLM output into a validated AIResponse.
+ * Extracts the outermost JSON object, validates destination IDs, and applies
+ * sensible defaults so callers never receive malformed data.
+ */
+function parseAIResponse(raw: string): AIResponse {
+  let jsonText = raw;
+  const firstBrace = raw.indexOf('{');
+  const lastBrace = raw.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace >= firstBrace) {
+    jsonText = raw.substring(firstBrace, lastBrace + 1);
+  } else {
+    console.warn('Could not find JSON boundaries in AI response. Attempting raw parse.', { raw });
+  }
+
+  let parsed: Record<string, unknown> = {};
+  try {
+    if (!jsonText) throw new Error('Empty response text');
+    parsed = JSON.parse(jsonText);
+  } catch (parseError) {
+    console.error('Failed to parse AI response JSON:', jsonText);
+    throw new Error('Invalid JSON response from AI');
+  }
+
+  const validIds = new Set(destinations.map((d) => d.id));
+  return {
+    assistantResponse:
+      typeof parsed.assistantResponse === 'string' && (parsed.assistantResponse as string).length > 0
+        ? (parsed.assistantResponse as string)
+        : 'I found some great options for you. Explore the highlighted destinations on the map.',
+    suggestedDestinationIds: Array.isArray(parsed.suggestedDestinationIds)
+      ? (parsed.suggestedDestinationIds as string[]).filter((id) => validIds.has(id)).slice(0, 4)
+      : [],
+    suggestedPrices:
+      parsed.suggestedPrices && typeof parsed.suggestedPrices === 'object'
+        ? Object.fromEntries(
+            Object.entries(parsed.suggestedPrices as Record<string, unknown>)
+              .filter(([id, v]) => validIds.has(id) && typeof v === 'number')
+              .map(([id, v]) => [id, Math.round(v as number)])
+          )
+        : {},
+    updatedParams:
+      parsed.updatedParams && typeof parsed.updatedParams === 'object'
+        ? (parsed.updatedParams as Partial<TripParams>)
+        : {},
+    tourScript: Array.isArray(parsed.tourScript)
+      ? (parsed.tourScript as TourStop[]).filter(
+          (s): s is TourStop =>
+            s &&
+            typeof s.destinationId === 'string' &&
+            validIds.has(s.destinationId) &&
+            typeof s.narration === 'string'
+        )
+      : [],
+  };
+}
+
+/**
+ * Build the user-message prefix containing current trip parameters and
+ * optional Exa-grounded travel context.
+ */
+function buildContextPrefix(
+  message: string,
+  currentParams: TripParams,
+  exaContext: string
+): string {
+  const paramsBlock = `[Current trip parameters: Origin="${currentParams.origin || 'Not set'}", Budget=$${currentParams.budget}, Duration=${currentParams.duration} days, Season=${currentParams.season}]`;
+  const exaBlock = exaContext ? `\n\n${exaContext}` : '';
+  return `${paramsBlock}${exaBlock}\n\nUser message: ${message}`;
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
 export async function sendChatMessage(
   message: string,
   history: ChatMessage[],
@@ -203,23 +288,23 @@ export async function sendChatMessage(
     };
   }
 
-  // Build conversation history in Gemini format
-  const geminiHistory: Content[] = history.slice(-12).map((msg) => ({
-    role: msg.role === 'user' ? 'user' : 'model',
-    parts: [{ text: msg.content }],
-  }));
-
-  const contextPrefix = `[Current trip parameters: Origin="${currentParams.origin || 'Not set'}", Budget=$${currentParams.budget}, Duration=${currentParams.duration} days, Season=${currentParams.season}]\n\nUser message: ${message}`;
-
-  const allContents: Content[] = [
-    ...geminiHistory,
-    {
-      role: 'user',
-      parts: [{ text: contextPrefix }],
-    },
-  ];
-
   try {
+    // Fetch live travel context from Exa (non-blocking — gracefully returns '' on failure)
+    const exaContext = await fetchExaTravelContext(message, currentParams);
+
+    // Build conversation history in Gemini format
+    const geminiHistory: Content[] = history.slice(-12).map((msg) => ({
+      role: msg.role === 'user' ? 'user' : 'model',
+      parts: [{ text: msg.content }],
+    }));
+
+    const contextPrefix = buildContextPrefix(message, currentParams, exaContext);
+
+    const allContents: Content[] = [
+      ...geminiHistory,
+      { role: 'user', parts: [{ text: contextPrefix }] },
+    ];
+
     const client = getAI();
     const modelToUse = resolveGeminiModel(selectedModel);
     const response = await client.models.generateContent({
@@ -229,66 +314,12 @@ export async function sendChatMessage(
         systemInstruction: SYSTEM_PROMPT,
         temperature: 0.8,
         maxOutputTokens: 2048,
-        responseMimeType: "application/json",
+        responseMimeType: 'application/json',
       },
     });
 
     const raw = response.text?.trim() ?? '';
-
-    // Extract JSON efficiently by finding the outermost braces
-    let jsonText = raw;
-    const firstBrace = raw.indexOf('{');
-    const lastBrace = raw.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace >= firstBrace) {
-      jsonText = raw.substring(firstBrace, lastBrace + 1);
-    } else {
-      console.warn("Could not find robust JSON boundaries in AI response. Attempting raw parse.", { raw });
-    }
-    
-    console.log("Extracted JSON text intended for parsing:", jsonText);
-
-    let parsed: any = {};
-    try {
-      if (!jsonText) throw new Error("Empty jsonText");
-      parsed = JSON.parse(jsonText);
-    } catch (parseError) {
-      console.error("Failed to parse JSON text from AI response. JSON text:", jsonText, "Raw response:", raw);
-      throw new Error("Invalid response format from AI");
-    }
-
-    const validIds = new Set(destinations.map((d) => d.id));
-    return {
-      assistantResponse:
-        typeof parsed.assistantResponse === 'string' && parsed.assistantResponse.length > 0
-          ? parsed.assistantResponse
-          : 'I found some great options for you. Explore the highlighted destinations on the map.',
-      suggestedDestinationIds: Array.isArray(parsed.suggestedDestinationIds)
-        ? parsed.suggestedDestinationIds
-            .filter((id) => validIds.has(id))
-            .slice(0, 4)
-        : [],
-      suggestedPrices:
-        parsed.suggestedPrices && typeof parsed.suggestedPrices === 'object'
-          ? Object.fromEntries(
-              Object.entries(parsed.suggestedPrices)
-                .filter(([id, v]) => validIds.has(id) && typeof v === 'number')
-                .map(([id, v]) => [id, Math.round(v as number)])
-            )
-          : {},
-      updatedParams:
-        parsed.updatedParams && typeof parsed.updatedParams === 'object'
-          ? parsed.updatedParams
-          : {},
-      tourScript: Array.isArray(parsed.tourScript)
-        ? parsed.tourScript.filter(
-            (s): s is TourStop =>
-              s &&
-              typeof s.destinationId === 'string' &&
-              validIds.has(s.destinationId) &&
-              typeof s.narration === 'string'
-          )
-        : [],
-    };
+    return parseAIResponse(raw);
   } catch (error) {
     console.error('Atlas AI error:', error);
     return {
@@ -326,22 +357,21 @@ async function sendGmiCloudMessage(
   currentParams: TripParams,
   model: string
 ): Promise<AIResponse> {
-  const contextPrefix =
-    `[Current trip parameters: Origin="${currentParams.origin || 'Not set'}", ` +
-    `Budget=$${currentParams.budget}, Duration=${currentParams.duration} days, ` +
-    `Season=${currentParams.season}]\n\nUser message: ${message}`;
-
-  // Build OpenAI-format messages array: system prompt + conversation history + new user message
-  const messages = [
-    { role: 'system' as const, content: SYSTEM_PROMPT },
-    ...history.slice(-12).map((msg) => ({
-      role: msg.role === 'assistant' ? ('assistant' as const) : ('user' as const),
-      content: msg.content,
-    })),
-    { role: 'user' as const, content: contextPrefix },
-  ];
-
   try {
+    // Fetch live travel context from Exa (non-blocking — gracefully returns '' on failure)
+    const exaContext = await fetchExaTravelContext(message, currentParams);
+    const contextPrefix = buildContextPrefix(message, currentParams, exaContext);
+
+    // Build OpenAI-format messages array: system prompt + conversation history + new user message
+    const messages = [
+      { role: 'system' as const, content: SYSTEM_PROMPT },
+      ...history.slice(-12).map((msg) => ({
+        role: msg.role === 'assistant' ? ('assistant' as const) : ('user' as const),
+        content: msg.content,
+      })),
+      { role: 'user' as const, content: contextPrefix },
+    ];
+
     const resp = await fetch('/api/gmi/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -355,55 +385,7 @@ async function sendGmiCloudMessage(
 
     const data = (await resp.json()) as { content?: string };
     const raw = (data.content ?? '').trim();
-
-    // Extract the outermost JSON object
-    let jsonText = raw;
-    const firstBrace = raw.indexOf('{');
-    const lastBrace = raw.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace >= firstBrace) {
-      jsonText = raw.substring(firstBrace, lastBrace + 1);
-    }
-
-    let parsed: any = {};
-    try {
-      if (!jsonText) throw new Error('Empty GMI Cloud response');
-      parsed = JSON.parse(jsonText);
-    } catch (parseError) {
-      console.error('Failed to parse GMI Cloud response JSON:', jsonText);
-      throw new Error('Invalid JSON response from GMI Cloud');
-    }
-
-    const validIds = new Set(destinations.map((d) => d.id));
-    return {
-      assistantResponse:
-        typeof parsed.assistantResponse === 'string' && parsed.assistantResponse.length > 0
-          ? parsed.assistantResponse
-          : 'I found some great options for you. Explore the highlighted destinations on the map.',
-      suggestedDestinationIds: Array.isArray(parsed.suggestedDestinationIds)
-        ? parsed.suggestedDestinationIds.filter((id: unknown) => validIds.has(id as string)).slice(0, 4)
-        : [],
-      suggestedPrices:
-        parsed.suggestedPrices && typeof parsed.suggestedPrices === 'object'
-          ? Object.fromEntries(
-              Object.entries(parsed.suggestedPrices)
-                .filter(([id, v]) => validIds.has(id) && typeof v === 'number')
-                .map(([id, v]) => [id, Math.round(v as number)])
-            )
-          : {},
-      updatedParams:
-        parsed.updatedParams && typeof parsed.updatedParams === 'object'
-          ? parsed.updatedParams
-          : {},
-      tourScript: Array.isArray(parsed.tourScript)
-        ? parsed.tourScript.filter(
-            (s): s is TourStop =>
-              s &&
-              typeof s.destinationId === 'string' &&
-              validIds.has(s.destinationId) &&
-              typeof s.narration === 'string'
-          )
-        : [],
-    };
+    return parseAIResponse(raw);
   } catch (error) {
     console.error('GMI Cloud error:', error);
     return {
