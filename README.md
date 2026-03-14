@@ -15,9 +15,38 @@ This contains everything you need to run your app locally.
 
 1. Install dependencies:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
+2. Set the required API keys in `.env`:
+   - `GEMINI_API_KEY`: For Google Gemini AI.
+   - `EXA_API_KEY`: For Exa search grounding.
+   - `GMI_CLOUD_API_KEY`: (Optional) for GMI Cloud models.
+3. Run the app (Frontend + Backend):
    `npm run dev`
+
+The app will be available at `http://localhost:3000`. The backend runs on `localhost:8080` (proxied via `/api`).
+
+## Vercel Deployment
+
+This project is optimized for deployment on [Vercel](https://vercel.com). It uses **Vercel Serverless Functions** for the backend logic.
+
+### Deployment Steps
+
+1. **Connect to Vercel**: Push your code to GitHub/GitLab/Bitbucket and import it as a New Project on Vercel.
+2. **Environment Variables**: Add the following secrets in the Vercel Dashboard:
+   - `GEMINI_API_KEY`
+   - `EXA_API_KEY`
+   - `GMI_CLOUD_API_KEY` (if using GMI models)
+3. **Build Settings**: Vercel should automatically detect Vite. Use the default settings:
+   - Framework Preset: `Vite`
+   - Build Command: `npm run build`
+   - Output Directory: `dist`
+4. **Deploy**: Vercel will build the frontend and automatically set up the serverless functions in the `api/` directory.
+
+### Project Structure (Vercel-aligned)
+
+- `src/`: React frontend (Vite).
+- `api/`: Serverless functions (Express) handling `/api/*` routes.
+- `vercel.json`: Routing and configuration.
+- `package.json`: Unified dependencies and scripts.
 
 ## GMI Cloud Integration
 
@@ -36,25 +65,13 @@ The `GMI_CLOUD_API_KEY` is kept on the backend so it is never exposed in the bro
 
 1. Obtain a GMI Cloud API key at <https://app.gmi-serving.com/api-keys>
 
-2. Add it to your backend environment:
+2. Add it to your root `.env` file or Vercel environment variables:
 
    ```bash
-   # backend/.env
    GMI_CLOUD_API_KEY=your_key_here
    ```
 
-   Or, if running via Docker Compose, add it to the root `.env` file:
-
-   ```bash
-   # .env
-   GMI_CLOUD_API_KEY=your_key_here
-   ```
-
-3. Start the backend (it also starts automatically with `docker-compose up`):
-
-   ```bash
-   cd backend && npm run dev
-   ```
+3. GMI Cloud logic is now integrated into the `api/` serverless functions. Local development automatically starts the server.
 
 4. In the Atlas chat UI, open the model selector and choose any **GMI Cloud** model:
    - `deepseek-ai/DeepSeek-R1`

@@ -1,14 +1,10 @@
 /**
- * exaService.ts
+ * api/exa/exaService.ts
  * Exa-powered search functions for travel destination data.
  *
  * Provides real-time travel intelligence — things to do, hotel picks,
  * flight info, local tips — grounded in live web content via Exa's
  * neural search API.
- *
- * Usage:
- *   import { searchDestinationInfo } from './exa/exaService.js';
- *   const info = await searchDestinationInfo('Tokyo', 'Japan');
  */
 
 import Exa from 'exa-js';
@@ -19,7 +15,7 @@ function getExaClient(): Exa {
   const apiKey = process.env.EXA_API_KEY;
   if (!apiKey || apiKey === 'MY_EXA_API_KEY') {
     throw new Error(
-      'EXA_API_KEY is not set. Add it to your .env file. ' +
+      'EXA_API_KEY is not set. Add it to your .env file or Vercel dashboard. ' +
       'Get a key at https://dashboard.exa.ai/api-keys'
     );
   }

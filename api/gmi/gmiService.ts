@@ -1,16 +1,6 @@
 /**
- * gmiService.ts
+ * api/gmi/gmiService.ts
  * GMI Cloud LLM proxy for Atlas travel assistant.
- *
- * GMI Cloud provides an OpenAI-compatible inference API at:
- *   https://api.gmi-serving.com/v1
- *
- * The frontend prepares the full OpenAI-format messages array (including the
- * system prompt with the destination index) and sends it here.  This service
- * acts as an authenticated proxy so the GMI Cloud API key is never exposed to
- * the browser.
- *
- * Obtain an API key at: https://app.gmi-serving.com/api-keys
  */
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -47,7 +37,7 @@ function getApiKey(): string {
   const key = process.env.GMI_CLOUD_API_KEY;
   if (!key || key === 'YOUR_GMI_CLOUD_API_KEY') {
     throw new Error(
-      'GMI_CLOUD_API_KEY is not set. Add it to your .env file. ' +
+      'GMI_CLOUD_API_KEY is not set. Add it to your .env file or Vercel dashboard. ' +
         'Get a key at https://app.gmi-serving.com/api-keys'
     );
   }

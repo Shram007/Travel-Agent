@@ -1,18 +1,18 @@
 /**
- * backend/src/index.ts
- * Entry point for the Wandr backend server.
- * Serves as the integration hub for Exa search and GMI Cloud LLM inference.
+ * api/index.ts
+ * Entry point for the Wandr backend serverless functions on Vercel.
  */
 
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
+import { fileURLToPath } from 'url';
+import path from 'path';
 import { searchTravelContext } from './exa/exaService.js';
 import { callGmiChat, GMI_MODELS } from './gmi/gmiService.js';
 
 const app = express();
-const PORT = process.env.PORT || 8080;
 
 app.use(cors());
 app.use(express.json());
@@ -27,10 +27,10 @@ const aiLimiter = rateLimit({
 });
 
 // Health check
-app.get('/health', (_req, res) => {
+app.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',
-    service: 'wandr-backend',
+    service: 'wandr-backend-vercel',
     exa: !!process.env.EXA_API_KEY && process.env.EXA_API_KEY !== 'MY_EXA_API_KEY',
     gmi: !!process.env.GMI_CLOUD_API_KEY && process.env.GMI_CLOUD_API_KEY !== 'YOUR_GMI_CLOUD_API_KEY',
   });
@@ -69,8 +69,6 @@ app.post('/api/exa/context', aiLimiter, async (req, res) => {
 });
 
 // GMI Cloud chat route — authenticated proxy to https://api.gmi-serving.com/v1
-// The frontend builds the full OpenAI-format messages array and sends it here
-// so the GMI_CLOUD_API_KEY is never exposed to the browser.
 app.post('/api/gmi/chat', aiLimiter, async (req, res) => {
   try {
     const messages = req.body?.messages;
@@ -98,10 +96,22 @@ app.post('/api/gmi/chat', aiLimiter, async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 Wandr backend running on http://localhost:${PORT}`);
-  console.log(`   Exa API key:       ${process.env.EXA_API_KEY ? '✅ loaded' : '❌ missing (add to backend/.env)'}`);
-  console.log(`   GMI Cloud API key: ${process.env.GMI_CLOUD_API_KEY ? '✅ loaded' : '⚠️ missing (optional — needed for GMI Cloud models)'}`);
-});
+// Support local development if run directly
+const isDirectRun = () => {
+  try {
+    const scriptPath = fileURLToPath(import.meta.url);
+    const entryPath = path.resolve(process.argv[1]);
+    return scriptPath === entryPath || scriptPath === entryPath + '.ts' || scriptPath === entryPath + '.js';
+  } catch (e) {
+    return false;
+  }
+};
+
+if (process.env.NODE_ENV !== 'production' && isDirectRun()) {
+  const PORT = process.env.PORT || 8080;
+  app.listen(PORT, () => {
+    console.log(`🚀 Wandr backend running on http://localhost:${PORT}`);
+  });
+}
 
 export default app;

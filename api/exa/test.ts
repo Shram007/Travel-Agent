@@ -1,11 +1,5 @@
 /**
- * test.ts — Smoke test for Exa initialization.
- * Run with: npm run test:exa  (from the backend/ folder)
- *
- * This verifies that:
- *   1. EXA_API_KEY is present in the environment
- *   2. The Exa client initialises without error
- *   3. A simple search returns results
+ * api/exa/test.ts — Smoke test for Exa initialization.
  */
 
 import 'dotenv/config';
@@ -30,7 +24,7 @@ async function main() {
   } catch (err: any) {
     if (err.message?.includes('EXA_API_KEY')) {
       console.error('❌ Missing EXA_API_KEY.');
-      console.error('   Add it to backend/.env:  EXA_API_KEY=your-key-here');
+      console.error('   Add it to your .env: EXA_API_KEY=your-key-here');
       console.error('   Get a key at: https://dashboard.exa.ai/api-keys');
     } else {
       console.error('❌ Exa search failed:', err.message);
