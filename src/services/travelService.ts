@@ -6,6 +6,10 @@
 import { GoogleGenAI, Content } from '@google/genai';
 import { destinations } from '../data/destinations';
 
+// NOTE: sendChatMessageReAct implements a formal ReAct (Reason + Act) loop.
+// It allows the LLM to call tools iteratively before returning a final response.
+// See: https://arxiv.org/abs/2210.03629
+
 const API_KEY = process.env.GEMINI_API_KEY;
 
 export const AVAILABLE_GEMINI_MODELS = [
@@ -264,6 +268,43 @@ function buildContextPrefix(
   return `${paramsBlock}${exaBlock}\n\nUser message: ${message}`;
 }
 
+// ── ReAct Tool Registry ────────────────────────────────────────────────────
+// Tools the LLM can call during a ReAct reasoning loop.
+// Each tool has a name, description, and an async execute function.
+
+interface ToolCall {
+  name: string;
+  args: Record<string, unknown>;
+}
+
+interface ToolResult {
+  tool: string;
+  result: string;
+}
+
+const TOOLS = [
+  {
+    name: 'search_travel_context',
+    description: 'Search for live travel information, flight prices, or destination details.',
+    schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'The search query for travel context.' },
+      },
+      required: ['query'],
+    },
+  },
+];
+
+async function dispatchTool(call: ToolCall, currentParams: TripParams): Promise<ToolResult> {
+  if (call.name === 'search_travel_context') {
+    const query = String(call.args.query ?? '');
+    const context = await fetchExaTravelContext(query, currentParams);
+    return { tool: call.name, result: context || 'No results found.' };
+  }
+  return { tool: call.name, result: `Unknown tool: ${call.name}` };
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export async function sendChatMessage(
@@ -342,6 +383,141 @@ export function getQuickSuggestions(): string[] {
     'Budget travel in Southeast Asia',
     'Where should I go for 10 days in fall?',
   ];
+}
+
+// ── ReAct Loop ───────────────────────────────────────────────────────────────
+
+/**
+ * ReAct-style chat: the LLM can call tools during reasoning before
+ * returning a final answer. Up to MAX_REACT_STEPS tool calls are allowed.
+ *
+ * NOTE: The ReAct loop is only active for GMI Cloud models. For Gemini models,
+ * this function delegates immediately to sendChatMessage (Gemini uses its own
+ * native function-calling mechanism rather than the text-based tool_call format).
+ *
+ * Loop:
+ *   1. Call LLM with tools defined in the system prompt
+ *   2. If the response contains a tool_call JSON block, execute the tool
+ *   3. Inject the tool result as a new "observation" message
+ *   4. Repeat until the LLM returns a plain answer or MAX_REACT_STEPS is reached
+ */
+const MAX_REACT_STEPS = 3;
+
+const REACT_SYSTEM_PROMPT = `${SYSTEM_PROMPT}
+
+You have access to the following tools. When you need live data, respond with ONLY a JSON tool call block — no other text:
+\`\`\`tool_call
+{"name": "search_travel_context", "args": {"query": "<your search query>"}}
+\`\`\`
+
+After receiving a tool result (prefixed with [Tool Result:]), incorporate it into your final answer.
+Always end with a plain language response to the user.`;
+
+/** Type guard for params objects that carry an optional selectedModel field. */
+function hasSelectedModel(params: TripParams): params is TripParams & { selectedModel: string } {
+  return (
+    'selectedModel' in params &&
+    typeof (params as TripParams & { selectedModel?: unknown }).selectedModel === 'string'
+  );
+}
+
+export async function sendChatMessageReAct(
+  message: string,
+  history: ChatMessage[],
+  currentParams: TripParams,
+): Promise<AIResponse> {
+  const conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = [
+    ...history.slice(-8).map((msg) => ({
+      role: msg.role === 'assistant' ? ('assistant' as const) : ('user' as const),
+      content: msg.content,
+    })),
+    { role: 'user', content: message },
+  ];
+
+  let steps = 0;
+
+  while (steps < MAX_REACT_STEPS) {
+    steps++;
+
+    // Build the messages array for this iteration
+    const messages = [
+      { role: 'system' as const, content: REACT_SYSTEM_PROMPT },
+      ...conversationHistory,
+    ];
+
+    // Call the LLM (OpenAI-compatible path via GMI or Gemini)
+    let rawResponse: string;
+    try {
+      const selectedModel = hasSelectedModel(currentParams) ? currentParams.selectedModel : undefined;
+      if (selectedModel && isGmiModel(selectedModel)) {
+        // Use GMI path
+        const resp = await fetch('/api/gmi/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messages, model: selectedModel }),
+        });
+        const data = await resp.json();
+        rawResponse = data?.choices?.[0]?.message?.content ?? '';
+      } else {
+        // Use Gemini path
+        const exaContext = await fetchExaTravelContext(message, currentParams);
+        const contextPrefix = buildContextPrefix(message, currentParams, exaContext);
+        // For Gemini, fall through to standard path on first step only
+        return sendChatMessage(contextPrefix + message, history, currentParams);
+      }
+    } catch (err) {
+      console.warn('[ReAct] LLM call failed, falling back to standard path.', err);
+      break;
+    }
+
+    // Check if the LLM wants to call a tool
+    const toolCallMatch = rawResponse.match(/```tool_call\s*([\s\S]*?)```/);
+    if (toolCallMatch) {
+      try {
+        const toolCall: ToolCall = JSON.parse(toolCallMatch[1].trim());
+        console.log(`[ReAct] Step ${steps}: calling tool '${toolCall.name}'`, toolCall.args);
+
+        const toolResult = await dispatchTool(toolCall, currentParams);
+        console.log(`[ReAct] Step ${steps}: tool result received`, { tool: toolResult.tool });
+
+        // Inject assistant's tool call and the observation into the conversation
+        conversationHistory.push({ role: 'assistant', content: rawResponse });
+        conversationHistory.push({
+          role: 'user',
+          content: `[Tool Result: ${toolResult.tool}]\n${toolResult.result}`,
+        });
+        // Continue the loop
+        continue;
+      } catch (err) {
+        // If tool call parsing fails, treat the response as final
+        console.warn('[ReAct] Tool call JSON parsing failed, treating response as final.', err);
+      }
+    }
+
+    // No tool call — this is the final answer
+    // Parse it the same way as the standard sendChatMessage response
+    try {
+      const parsed = JSON.parse(rawResponse);
+      return {
+        assistantResponse: parsed.assistantResponse ?? rawResponse,
+        suggestedDestinationIds: parsed.suggestedDestinationIds ?? [],
+        suggestedPrices: parsed.suggestedPrices ?? {},
+        updatedParams: parsed.updatedParams ?? {},
+        tourScript: parsed.tourScript ?? [],
+      };
+    } catch {
+      return {
+        assistantResponse: rawResponse,
+        suggestedDestinationIds: [],
+        suggestedPrices: {},
+        updatedParams: {},
+        tourScript: [],
+      };
+    }
+  }
+
+  // Fallback if max steps reached without a final answer
+  return sendChatMessage(message, history, currentParams);
 }
 
 // ── GMI Cloud path ───────────────────────────────────────────────────────────
